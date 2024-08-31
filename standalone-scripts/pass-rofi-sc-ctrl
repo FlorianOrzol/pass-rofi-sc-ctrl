@@ -1,0 +1,1348 @@
+#!/bin/bash
+#
+# 
+#  _____        _
+# |~>   |     ('v') 
+# /:::::\    /{w w}\ 
+#--------------------------------
+# Copyright Florian Orzol
+#
+# title: pass-ectrl
+# description: easy pass control
+# date: 01.05.2024
+# version: 0.8 
+# usage: easy pass handling
+
+# ============== #
+# >> HANDLING << #
+# ============== #
+#
+# This script is for easy handling of the passwords.
+# Probalby you won't need a browser extension anymore and it could be more comfortable than before. (not only for browsers)
+#
+# Create: Create new terms in terminal and only with this script, to get the needed structure.
+# Autofill: For Autofill the credentials, it is usefull to set a shortcut. 
+#   - If it works fine, it will detect the active window by the title and fill the credentials automatically.
+# Edit: It could also be usefull to set a shortcut, because of the automatic detection.
+#   - Then it will choose the term by the title of the active window and you could choose and enter the correct values.
+# get-info: To get the information of a term, you could use this function.
+#   - Get info of your choice with fuzzy finding.
+#   - It will show you the information with rofi and copy the password to the clipboard with the conditions of your pass and gpg settings.
+
+
+
+# =========== #
+# >> HINTS << #
+# =========== #
+#
+# - You should start with a new Database, because of the needed structure of the script.
+# - Be shure, that the correct textfield on the right site is selected. Otherwise you could send your secret data to the wrong place.
+# - Therofore be also patient with the automatic enter function.
+# - It will use your settings of the pass and gpg tools.
+
+
+
+# ==================== #
+# >> BRAINSTORMING <<  #
+# ==================== #
+#
+# - add function for get all information of a term (except the password) 
+# - probably there is no need to decrypt e.g. the username or the notes. Information were name and value are the same. These information could be shown directly in the rofi window.
+# - integrate a password generator
+# - add a function to change the password: enter password, store the old password and the new password in a new file. After that, delete the old password and create a new file with the new password. Then enter the old password and copy the new password to the clipboard. 
+# - add function to get all elements of a term
+# - prevent wrong input
+
+
+
+# ===================== #
+# >> NEEDED PACKAGES << #
+# ===================== #
+#
+# - pass
+# - gpg
+# - xdotool
+# - rofi
+# - awk
+# - sed
+# - grep
+# - find
+
+
+
+
+#    <')
+# \_;( )
+# >>>> START SCRIPT <<<< #
+
+
+# =============================== #
+# >> ENTER YOUR VARIABLES HERE << #
+# =============================== #
+#
+
+PATH_TO_PASS="/home/$(whoami)/.password-store"
+
+# ---------------------------------------------
+# >> PASSWORD-GENERATOR
+NUMBER_OF_CHARS_PER_WORD=20
+NUMBER_OF_WORDS=4
+NUMBER_OF_CAPITAL_LETTERS="1-3"
+SPECIAL_SIGNS="!@#$%^&*()_+{}[]:;<>?.,-=_+~|"
+NUMBER_OF_SIGNS_BETWEEN_WORDS="1-3"
+NUMBER_OF_SIGNS_AT_THE_END="1-3"
+NUMBER_OF_SINGS_AT_THE_BEGINNING="1-3"
+NUMBERS_BETWEEN_WORDS="1-2"
+NUMBER_AT_THE_BEGINNING="1-3"
+NUMBER_AT_THE_END="1-3"
+
+
+
+
+
+
+
+
+
+
+
+
+# ===================== #
+# >> CREATE NEW TERM << #
+# ===================== #
+#
+# This creates a new term in the password-store. 
+# You have to use you preferred terminal emulator to enter the data.
+function new {
+    output "create a new term"
+
+
+    term=$(input "term: ")
+
+    # check if term exists
+    if [ -d "$PATH_TO_PASS/$term" ]; then
+        output "Term already exists"
+        exit 1
+    fi
+
+    # check if term is empty
+    if [ -z "$term" ]; then
+        output "Term is empty"
+        exit 1
+    fi
+    
+    username=$(input "username: ")
+
+    pass=$(input "password: " "-s")
+    passRetype=$(input "retype password: " "-s")
+    # if passwords do not match, exit with failure. 
+    # Propably start again 
+    if [ "$pass" != "$passRetype" ] && ! { [ -z "$pass" ] && [ -z "$passRetype" ]; }; then
+        output "passwords do not match"
+        exit 1
+    fi
+
+
+    url=$(input "url: ")
+    # remove https:// und http://
+    url_name=$(echo $url | sed 's/https\?:\/\///')
+    # remove www.
+    url_name=$(echo $url_name | sed 's/www\.//')
+    # remove all after /
+    url_name=$(echo $url_name | sed 's/\/.*//')
+
+    echo -n "$username" | pass insert --echo "$term/name/$username"
+    echo -n "$pass" | pass insert --echo "$term/pass"
+    echo -n "$url" | pass insert -m -f "$term/urls/$url_name"
+
+
+
+
+   #---------------------------------------------#
+   # >> IDENTIFY AND AUTOFILL CREDENDIALS << 
+    while true; do
+        output "Do you want to save title for automaticaly identify?"
+        output "Open a browser or program and navigate to the login-website you want to save the credentials for."
+        output "Then confirm and open the login-website before confirm (Y/n)"
+        read confirm
+
+
+        # if confirm, enter url and title
+        if [ -z "$confirm" ] || [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
+            output "Please click on the window you want to save the credentials for."
+            # get window pid by selecting the window
+            pid=$(get_window_pid select-window)
+            # get the 'title - class' of the window
+            title=$(get_window_information $pid title-class)
+
+
+            output "The class is usualy the last part of the title, separated by a '-'"
+            output "e.g. If the identification are for internet explorer, the title could be 'Internet Explorer - Qutebrowser'"
+            output "Then the identification would only works for 'Qutebrowser'"
+            output "Do you want to remove the class of the title to identify class-independend? (Y/n)"
+
+            read confirm
+            if [ -z "$confirm" ] || [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
+                # remove the class of the title
+                title=$(echo $title | rev | cut -d'-' -f2- | rev)
+                # remove all blanks at the end
+                title=$(echo $title | sed 's/ *$//')
+            fi
+            
+            
+            autofill="username-enter-password-enter"
+            output "Use the keywords to autofill the credentials."
+            output "example: utpe" 
+            output "use the following commands to autofill the credentials:"
+            output "-------------------------------------------------------"
+            output "u: to enter the (u)sername"
+            output "t: to hit the (t)abulator key"
+            output "p: to enter the (p)assword"
+            output "e: to hit the (e)nter key"
+            output "s: to hit the (s)pace key"
+
+            while true; do
+                autofill=$(input "Autofill: ")
+                # confirm the autofill order
+                output "Do you want to save the autofill order? (Y/n)"
+                output "'$title' ----> '$autofill'"
+                if [ -z "$confirm" ] || [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
+                    break
+                fi
+            done
+
+            output "Do you want to save the autofill order? (Y/n)"
+            output "'$title' ----> '$autofill'"
+            title=$(replace_illegal_filename_chars "$title")
+            output "The title is saved as: '$title'"
+            echo -n "$autofill" | pass insert -m -f "$term/identifies/$title"
+        fi
+
+        output "Do you want to enter more credentials (Y/n)"
+        read confirm
+        if [ "$confirm" == "n" ] || [ "$confirm" == "N" ]; then
+            break
+        fi
+    done
+    
+
+    #---------------------------------------------#
+    # >> MORE NOTES <<
+    # TODO: check for correct input
+    while true; do
+        output "Do you want to enter more notes (Y/n)"
+        read confirm
+        if [ -z "$confirm" ] || [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
+            output "Enter a name for the notice"
+            noteName=$(input "name: ")
+            output "Enter the notice"
+            note=$(input " your note for $noteName: ")
+            output "Do you want to save? (Y/n)"
+            read confirm
+            if [ -z "$confirm" ] || [ "$confirm" == "y" ] || [ "$confirm" == "Y" ]; then
+                echo -n "$note" | pass insert -m -f "$term/notes/$noteName"
+            fi
+        else
+            break;
+        fi
+    done
+}
+
+
+
+
+
+
+
+
+
+
+
+# ========================== #
+# >> AUTOFILL CREDENTIALS << #
+# ========================== #
+#
+
+function autofill {
+
+
+    # get pid of the active window
+    pid=$(get_window_pid active-window)
+    # If there are more than one term (e.g. for different users), you have to choose one.
+    # If there is no term, you have to choose one by yourself.
+    identifiesPath=$(get_path_identifies_by_window_pid $pid)
+    # choose the term by the title of the active window
+    term=$(choose_auto_term_by_identifies "$identifiesPath"); EXIT_IF_ABORT;
+    # get identifiy by the term
+    identify=$(get_identify_by_pathpass_identifies "$identifiesPath")
+
+    if [[ "$term" == "Choose another Term to edit" ]]; then
+        # choose another term
+        term=$(choose_auto_term_by_identifies none); EXIT_IF_ABOR
+        # if Choose another Term to edit is selected, there is none identify toget the default autofill order
+        identify="none"
+    fi
+
+    # if there is no identify, you get the default autofill order
+    if [[ "$identify" == "none" ]]; then
+        my_rofi "nolist" "The name will be entered and the password will be saved to the clipboard for 45 sec"
+        EXIT_IF_ABORT
+
+        # past the name and copy the password to the clipboard
+        paste_element_value "$term" name
+        pass -c "$term/pass"
+        exit 0
+    fi
+
+    # get the autofill order by the identify
+    autofill=$(pass "$term/identifies/$identify")
+
+
+    # fill the credentials by the autofill order
+    for (( i=0; i<${#autofill}; i++ )); do
+        char="${autofill:$i:1}"
+        case $char in
+            u) paste_element_value "$term" name ;;
+            t) xdotool key Tab ;;
+            p) paste_element_value "$term" pass ;;
+            r) xdotool key Return; sleep 0.2; ;; # sleep for 0.2 seconds to wait for the page to load
+            s) xdotool key space ;;
+        esac
+    done
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+# =============== #
+# >> EDIT TERM << #
+# =============== #
+#
+
+function edit {
+
+    # get the term automatically by the title of the active window.
+    # If there are more than one term (e.g. for different users), you have to choose one.
+    # If there is no term, you have to choose one by yourself.
+
+    # get pid of the active window
+    pid=$(get_window_pid active-window)
+    # get all founded titles of the active window
+    identifiesPath=$(get_path_identifies_by_window_pid $pid)
+    # choose the term by the title of the active window
+    term="$(choose_auto_term_by_identifies "$identifiesPath")"; EXIT_IF_ABORT;
+
+    # if you want to choose another term, you could do it here
+    if [[ "$term" == "Choose another Term to edit" ]]; then
+        # choose another term
+        term="$(choose_auto_term_by_identifies none)"; EXIT_IF_ABORT
+    fi
+
+
+
+    # choose what to edit
+    list="Password\nAuto-identification\nNotes\nAutofill-order\nUsername\nUrls\nEdit Term\nChoose another Term to edit"
+    prompt="edit: "
+    info=$(pass "$term")
+    options=" -i -no-custom"
+    chooseWhat=$(my_rofi "$list" "$info" "$prompt"  "$options"); EXIT_IF_ABORT
+
+
+    # if you won't edit the automatic term, you could choose another
+    if [[ $chooseWhat == "Choose another Term to edit" ]]; then
+
+        # choose another term
+        list=$(all_termnames)
+        prompt="choose term: "
+        info="Select term to edit"
+        options="-i -no-custom"
+        term="$(my_rofi "$list" "$info" "$prompt" "$options")"; EXIT_IF_ABORT;
+
+        # choose again what to edit
+        list="Password\nAuto-identification\nNotes\nAutofill-order\nUsername\nUrls\nEdit Term"
+        prompt="edit: "
+        info=$(pass "$term")
+        options=" -i -no-custom"
+        chooseWhat=$(my_rofi "$list" "$info" "$prompt"  "$options"); EXIT_IF_ABORT;
+
+    fi
+
+
+    case $chooseWhat in
+
+
+        # ---------------------------------------------
+        # >> EDIT WINDOW-TITLES <<
+
+        "Auto-identification")
+
+            # choose what to do with the titles
+            list="add\nchange\nremove"
+            info="'change' and 'add' is, by selecting a window\n\n"
+            info+=$(pass "$term/identifies")
+            chooseDoings=$(my_rofi "$list" "$info" "title" "-i -no-custom"); EXIT_IF_ABORT;
+
+
+            case $chooseDoings in
+                remove)
+                    # remove window title
+                    identifiesFN=$(get_element "$term" identifies)
+
+                    # How many identifies are there
+                    if [[ $(check_counts "$identifiesFN") == "one" ]]; then
+                        # if there is only one title, it will be used
+
+                        identifyFN="$identifiesFN"
+                        identify=$(replace_illegal_filename_chars_back "$identifyFN") # replace illegal characters
+
+                    elif [[ $(check_counts "$identifiesFN") == "more" ]]; then
+                        # if there are more than one title, you have to choose one
+                    
+                        list=$(replace_illegal_filename_chars_back "$identifiesFN") # replace illegal characters
+                        prompt="Select title to delete"
+                        info="Select title to delete from term '$term'"
+                        options="-i -no-custom"
+                        title=$(my_rofi "$list" "$info" "$prompt" "$options"); EXIT_IF_ABORT;
+                        titleFN=$(replace_illegal_filename_chars "$title") # replace illegal characters
+
+                    else
+                        # if there is no title, it will exit with failure
+
+                        rofi -e "No title found to remove"
+                        exit 1  
+                    fi
+
+
+                    # finally confirm the deletion
+                    info="Do you want to delete?\n\nterm: '$term'\ntitle: '$title'"
+
+                    confirm=$(my_rofi "yes\nno" "$info" "confirm" "-i -no-custom"); EXIT_IF_ABORT;
+                    # if you confirm, the title will be deleted
+                    if [ $confirm == "yes" ]; then
+                        pass rm "$term/identifies/$titleFN"
+                    fi
+                    ;;
+
+                change)
+                    # change identify
+
+                    # get the old identifies
+                    identifiesFN=$(get_element "$term" identifies)
+
+                    # How many titles are there
+                    if [[ $(check_counts $identifiesFN) == "one" ]]; then
+                        # if there is only one title, it will be used
+                        
+                        titleFN=$identifiesFN
+                        # Show the readable title
+                        titleShow=$titleFN
+                        title=$(replace_illegal_filename_chars_back "$titleFN") # replace illegal characters
+
+                    elif [[ $(check_counts $identifiesFN) == "more" ]]; then
+                        # if there are more than one title, you have to choose one
+
+                        list=$(replace_illegal_filename_chars_back "$identifiesFN") # replace illegal characters
+                        prompt="Select title to change"
+                        info="Select title to change from term '$term'"
+                        options="-i -no-custom"
+                        title=$(my_rofi "$list" "$info" "$prompt" "$options"); EXIT_IF_ABORT;
+                        titleFN=$(replace_illegal_filename_chars "$identify") # replace illegal characters
+
+                    else
+                        # if there is no title, it will exit with failure
+
+                        rofi -e "No title found to change"
+                        exit 1
+                    fi
+
+                    # get the new title, only way by selecting a window
+                    pid_selectWindow=$(get_window_pid select-window)
+                    newTitle=$(get_window_information $pid_selectWindow title-class)
+                    newTitleFN=$(replace_illegal_filename_chars "$newTitle") # replace illegal characters
+
+                    # ask if you remove the class of the title
+                    newTitle_without_class=$(echo $newTitle | rev | cut -d'-' -f2- | rev)
+                    #remove all blanks at the end
+                    newTitle_without_class=$(echo $newTitle_without_class | sed 's/ *$//')
+
+                    info="Do you want to remove the class from the title?\n\nfrom: $newTitle\nto: $newTitle_without_class"
+                    confirm=$(my_rofi "yes\nno" "$info" "confirm" "-i -no-custom"); EXIT_IF_ABORT;
+                    # if you confirm, the title will be changed
+                    if [ $confirm == "yes" ]; then
+                        newTitle=$newTitle_without_class
+                        newTitleFN=$(replace_illegal_filename_chars "$newTitle") # replace illegal characters
+                    fi
+
+                    # finally confirm the change
+                    info="Do you want to change the title?\nfrom: $title\nto: $newTitle"
+                    confirm=$(my_rofi "yes\nno" "$info" "confirm" "-i -no-custom"); EXIT_IF_ABORT;
+                    # if you confirm, the title will be changed
+                    if [ $confirm == "yes" ]; then
+                        pass mv "$term/identifies/$titleFN" "$term/identifies/$newTitleFN"
+                    fi
+                    ;;
+
+                add)
+                    # add window title
+
+                    # get the title by selecting a window
+                    pid_selectWindow=$(get_window_pid select-window)
+                    title=$(get_window_information $pid_selectWindow title-class)
+
+                    # replace illegal characters
+                    titleFN=$(replace_illegal_filename_chars "$title") 
+                    # show the title
+                    titleShow=$titleFN
+                    
+
+                    list="only-enter"
+                    info="Do you want to automatically fill the credentials for '$titleShow'?\n\n"
+                    info+="Use the keywords to autofill the credentials.\n"
+                    info+="example: utpe\n"
+                    info+="u: to enter the (u)sername\n"
+                    info+="t: to hit the (t)abulator key\n"
+                    info+="p: to enter the (p)assword\n"
+                    info+="e: to hit the (e)nter key\n"
+                    info+="s: to hit the (s)pace key\n"
+                    prompt="Autofill: "
+                    options=""
+                    autofill=$(my_rofi "$list" "$info" "$prompt" "$options"); EXIT_IF_ABORT;
+
+                    # ask if you remove the class of the title
+                    title_without_class=$(echo $title | rev | cut -d'-' -f2- | rev)
+                    # remove all blanks at the end
+                    title_without_class=$(echo $title_without_class | sed 's/ *$//')
+                    # confirm the change
+                    info="Do you want to remove the class from the title?\n\nfrom: $titleFN\nto: $title_without_class"
+                    confirm=$(my_rofi "yes\nno" "$info" "confirm" "-i -no-custom"); EXIT_IF_ABORT;
+                    # if you confirm, the title will be changed
+                    if [ $confirm == "yes" ]; then
+                        title=$title_without_class
+                        titleFN=$(replace_illegal_filename_chars "$titleFN") # replace illegal characters
+                    fi
+
+
+                    # finally confirm the change
+                    list="yes\nno"
+                    info="Do you want to add?\n\nautofill: $autofill\nfor title: \"$title\""
+                    prompt="confirm"
+                    options="-i -no-custom"
+                    confirm=$(my_rofi "$list" "$info" "$prompt" "$options"); EXIT_IF_ABORT;
+
+                    if [ $confirm == "yes" ]; then
+                        echo -n "$autofill" | pass insert -m -f "$term/identifies/$titleFN"
+                    fi
+                    ;;
+            esac
+            ;;
+        
+
+
+
+
+        # ---------------------------------------------
+        # >> EDIT USERNAME <<
+        Username)
+
+            # get the old username
+            oldUsername=$(get_element "$term" name)
+
+            # Enter the new username
+            username=$(my_rofi "only-enter" "-" "Enter Username"); EXIT_IF_ABORT
+
+            # finally confirm the change
+            info="Do you want to change the username?\n\nfrom: $oldUsername\nto $username"
+            confirm=$(my_rofi "yes\nno" "$info" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+
+            if [ $confirm == "yes" ]; then
+                pass rm "$term/name/$oldUsername"
+                echo -n "$username" | pass insert -m -f "$term/name/$username"
+            fi
+            ;;
+
+
+
+
+        # ---------------------------------------------
+        # >> EDIT PASSWORD <<
+        Password)
+
+            # choose to enter a new password or to generate a new one
+            choose=$(my_rofi "enter\ngenerate\nchange" "-" "password" "-i -no-custom"); EXIT_IF_ABORT
+
+            case $choose in
+                # enter a new password
+                enter)
+                    # enter the new password
+                    pass=$(my_rofi "only-enter" "-" "Enter password" "-password -s"); EXIT_IF_ABORT
+
+                    # retype the new password
+                    passRetype=$(my_rofi "only-enter" "-" "Retype password" "-password -s"); EXIT_IF_ABORT
+
+                    # if passwords do not match, exit with failure. 
+                    # Propably start again 
+                    if [ $pass != $passRetype ]; then
+                        rofi -e "Passwords do not match"
+                        my_rofi "nolist" "-" "Passwords do not match" "-no-custom"
+                        exit 1
+                    fi
+                    ;;
+                # generate a new password
+                generate)
+                    # generate a new password
+
+                    pass=$(generate_password)
+                    ;;
+            esac
+
+            # finally confirm the change
+            confirm=$(my_rofi "yes\nno" "confirm" "Do you want to change the password to\n$pass" "-no-custom"); EXIT_IF
+
+
+            if [ $confirm == "yes" ]; then
+                # mv old password to pass-old
+                pass mv "$term/pass" "$term/pass-old"
+
+                # insert new password
+                echo -n "$pass" | pass insert -m -f "$term/pass"
+            fi
+
+            ;;
+
+
+
+
+        # ---------------------------------------------
+        # >> EDIT URLS <<    
+        Urls)
+
+            # Choose what to do
+            list="add\nchange\nremove"
+            prompt="URL:"
+            info=$(pass "$term"/urls)
+            choose=$(my_rofi "$list" "$info" "$prompt" "-i")
+            EXIT_IF_ABORT
+            
+
+            case $choose in
+                # remove url
+
+
+                remove) 
+                    # remove the url
+
+                    # get urls of the term
+                    url=$(get_element "$term" urls)
+
+                    # How many urls are there
+                    if [[ $(check_counts $url) == "one" ]]; then
+                        # if there is only one url, it will be used
+
+                        url=$url
+                    elif [[ $(check_counts $url) == "more" ]]; then
+                        # if there are more than one url, you have to choose one
+
+                        url=$(my_rofi "$url" "Select url to delete" "URL" "-i -no-custom"); EXIT_IF_ABORT
+                    else
+                        # if there is no url, it will exit with failure
+                        my_rofi "nolist" "-" "No url found to remove" "-no-custom"
+                        exit 1
+                    fi
+
+                    # finally confirm the deletion
+                    confirm=$(my_rofi "yes\nno" "Do you want to delete the url $url" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+
+                    
+                    if [ $confirm == "yes" ]; then
+                        pass rm "$term/urls/$url"
+                    fi
+                    ;;
+
+
+                change)
+                    # change url
+
+                    # get urls of the term
+
+                    url=$(get_element "$term" urls)
+
+
+
+                    if [[ $(check_counts $url) == "one" ]]; then
+                        # if there is only one url, it will be used
+
+                        url=$url
+                    elif [[ $(check_counts $url) == "more" ]]; then
+                        # if there are more than one url, you have to choose one
+
+                        url=$(my_rofi "$url" "Select url to change" "-" "-i -no-custom"); EXIT_IF_ABORT
+                    else
+                        my_rofi "nolist" "-" "No url found to change" "-no-custom"
+                        exit 1
+                    fi
+                    # finally confirm the change
+                    confirm=$(my_rofi "yes\nno" "Do you want to change the url?\n\nfrom: $url\nto:   $url" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+
+                    if [ $confirm == "yes" ]; then
+                        pass rm "$term/urls/$oldUrl"
+                        url_name=$(echo $url | sed 's/https\?:\/\///') # remove https:// und http://
+                        url_name=$(echo $url_name | sed 's/www\.//') # remove www.
+                        url_name=$(echo $url_name | sed 's/\/.*//') # remove all after /
+                        echo -n "$url" | pass insert -m -f "$term/urls/$url_name"
+                    fi
+                    ;;
+
+
+                add)
+                    # add url
+                    # TODO: check for correct and doubled input
+                    existingUrls=$(pass "$term/urls")
+
+                    url=$(my_rofi "only-enter" "$existingUrls" "Enter url:"); EXIT_IF_ABORT
+                    url_name=$(echo $url | sed 's/https\?:\/\///') # remove https:// und http://
+                    url_name=$(echo $url_name | sed 's/www\.//') # remove www.
+                    url_name=$(echo $url_name | sed 's/\/.*//') # remove all after /
+                    echo -n "$url" | pass insert -m -f "$term/urls/$url_name"
+                    ;;
+            esac
+            ;;
+
+
+        # ---------------------------------------------
+        # >> EDIT TERM <<
+
+        "Edit Term")
+            # choose to edit the term
+
+            # save the old term
+            oldTerm=$term
+
+            # choose what to do
+            choose=$(my_rofi "Remove\nChange" "$oldTerm" "-" "-i -no-custom"); EXIT_IF_ABORT
+
+            case $choose in
+            
+                Remove)
+                    # remove term
+
+                    confirm=$(my_rofi "no\nyes" "Do you want to delete the term?\n\nterm: $oldTerm" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+
+                    if [ $confirm == "yes" ]; then
+                        pass rm -r "$oldTerm"
+                    fi
+                    ;;
+
+
+                Change)
+                    # change term
+
+                    term=$(my_rofi "only-enter" "Old Termname: $term" "Enter term:"); EXIT_IF_ABORT
+
+                    # check if term exists
+                    if [ -d "$PATH_TO_PASS/$term" ]; then
+                        my_rofi "nolist" "-" "Term already exists" "-no-custom"
+                        exit 1
+                    fi
+
+                    # confirm the change
+                    confirm=$(my_rofi "yes\nno" "Do you want to change the termname?\n\nfrom: $oldTerm\nto:     $term" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+                    if [ $confirm == "yes" ]; then
+                        pass mv "$oldTerm" "$term"
+                    fi
+                    ;;
+            esac
+            ;;
+
+
+
+        # ---------------------------------------------
+        # >> EDIT AUTOFILL <<
+
+        "Autofill-order")
+            # edit autofill order
+
+            # choose the identification of editing the autofill order
+            listFN=${get_element "$term" identifies}
+            list=$(replace_illegal_filename_chars_back "$listFN")
+            title=$(my_rofi "$list" "Select title to edit the autofill order" "title" "-i -no-custom"); EXIT_IF_ABORT
+            titleFN=$(replace_illegal_filename_chars "$title")
+
+            oldAutofill=$(pass "$term/autofill/$titleFN")
+
+            # choose what to do
+            prompt="autofill"
+            info="u: to enter the (u)sername\n"
+            info+="t: to hit the (t)abulator key\n"
+            info+="p: to enter the (p)assword\n"
+            info+="e: to hit the (e)nter key\n"
+            info+="s: to hit the (s)pace key\n"
+            autofill=$(my_rofi "only-enter" "$title -> $oldAutofill\n\n$info" "$prompt"); EXIT_IF_ABORT
+
+            # finally confirm the change
+            confirm=$(my_rofi "yes\nno" "Do you want to change the autofill order?\n\ntitle: $title\nfrom: $oldAutofill\nto:   $autofill\n\n$info" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+
+
+            if [ $confirm == "yes" ]; then
+                echo -n "$autofill" | pass insert -m -f "$term/identifies/$titleFN"
+
+            fi
+            ;;
+        
+
+
+
+
+        # ---------------------------------------------
+        # >> EDIT NOTES <<
+
+
+        Notes)
+        
+            # choose what to do
+            info=$(pass "$term/notes")
+            choose=$(my_rofi "add\nchange\nremove" "$info" "-" "-i -no-custom"); EXIT_IF_ABORT
+
+            case $choose in
+                remove)
+                    # remove note
+
+                    # get notes of the term
+                    note="$(get_element "$term" notes)"
+
+                    # How many notes are there
+                    if [[ $(check_counts "$note") == "one" ]]; then
+                        # if there is only one note, it will be used
+
+                        note=$note
+                    elif [[ $(check_counts "$note") == "more" ]]; then
+                        # if there are more than one note, you have to choose one
+
+                        note=$(my_rofi "$note" "Select note to delete" "-" "-i -no-custom"); EXIT_IF_ABORT
+                    else
+                        # if there is no note, it will exit with failure
+
+                        my_rofi "nolist" "-" "No note found to remove" "-no-custom"
+                        exit 1
+                    fi
+
+                    # finally confirm the deletion
+                    confirm=$(my_rofi "yes\nno" "Do you want to delete?\n\nnote: $note" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+                    if [ $confirm == "yes" ]; then
+                        pass rm "$term/notes/$note"
+                    fi
+                    ;;
+
+
+                change)
+                    # change note
+
+                    # get notes of the term
+                    note=$(get_element "$term" notes)
+
+                    # How many notes are there
+                    if [[ $(check_counts "$note") == "one" ]]; then
+                        # if there is only one note, it will be used
+
+                        note=$note
+                    elif [[ $(check_counts "$note") == "more" ]]; then
+                        # if there are more than one note, you have to choose one
+
+                        note=$(my_rofi "$note" "Select note to change" "-" "-i -no-custom"); EXIT_IF_ABORT
+                    else
+                        # if there is no note, it will exit with failure
+
+                        my_rofi "nolist" "-" "No note found to change" "-no-custom"
+                        exit 1
+                    fi
+
+                    # get the new note
+
+                    # enter note name
+                    info="$(pass "$term/notes")"
+                    name=$(my_rofi "only-enter" "$info" "Enter note name:" "-filter \"$note\""); EXIT_IF_ABORT
+
+                    # enter note information
+                    info="note: $name\nold name: $note\nold note: $(pass "$term/notes/$note")"
+                    newNote=$(my_rofi "only-enter" "$info" "Enter note:"); EXIT_IF_ABORT
+
+                    # finally confirm the change
+                    info="Do you want to change the note from old-note to new-note?\n\nnote: $name\nold note: $note\nnew note: $newNote"
+                    confirm=$(my_rofi "yes\nno" "$info" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+
+                    if [ $confirm == "yes" ]; then
+                        # remove old note
+                        pass rm "$term/notes/$note"
+                        # insert new note
+                        echo -n "$newNote" | pass insert -m -f "$term/notes/$name"
+                    fi
+                    ;;
+
+
+                add)
+                    # add note
+
+                    # enter note name
+                    info="$(pass "$term/notes")"
+                    name=$(my_rofi "only-enter" "$info" "Enter note name:"); EXIT_IF_ABORT
+
+                    # enter note information
+                    newNote=$(my_rofi "only-enter" "note: $name" "Enter note:"); EXIT_IF_ABORT
+
+                    # finally confirm the change
+                    confirm=$(my_rofi "yes\nno" "Do you want to add the note $name with notice: $newNote" "confirm" "-i -no-custom"); EXIT_IF_ABORT
+                    if [ $confirm == "yes" ]; then
+                        echo -n "$newNote" | pass insert -m -f "$term/notes/$name"
+                    fi
+                    ;;
+
+            esac
+            ;;
+
+    esac
+}
+
+#>>>>>>>HERE<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+# ============== #
+# >> GET INFO << #
+# ============== #
+#
+# get the information of the selected element
+# show the information in a rofi window
+# save the information to the clipboard for 45 sec
+
+
+function get-info {
+    # the function is used to get the information of the selected element
+    # it shows the information in a rofi window
+    # and save the information to the clipboard for 45 sec
+    # TODO: FAIL: if last character is blank, it will not work
+
+    # get all elements except the titles
+    list=$(find "$PATH_TO_PASS" -type f -name '*.gpg' | grep -v "/titles/"  | grep -v ".gpg-id" )
+    # remove the path and the .gpg
+    list=$(echo "$list" | sed "s|^$PATH_TO_PASS/||" | sed 's/.gpg//g')
+    # for better reading, replace / with another separator
+    list=$(echo "$list" | sed 's|/| \|\| |g') 
+    # choose the element
+    element=$(my_rofi "$list" "copy the information to clipbord for x sec" "choose element: " "-i -no-custom"); EXIT_IF_ABORT
+    # replace the separator to get the path of the element 
+    element=$(echo "$element" | sed 's| \|\| |/|g')
+    # get the information of the element
+    showElement=$(pass show "$element")
+    # for better reading, replace / with another separator
+    altElement=$(echo "$element" | sed 's|/| -- |g') 
+    # show the information in a rofi window
+    my_rofi "nolist" "The information of the element:\n\n$altElement\n = $showElement\n\n it is saved to clipboard for 45 sec"
+    # save the information to the clipboard for 45 sec
+    pass -c "$element"
+}
+
+
+
+
+
+
+
+
+
+# ====================== #
+# >> HELPER FUNCTIONS << #
+# ====================== #
+#
+
+
+# ---------------------------------------------
+# >> OUTPUT & INPUT FUNCTIONS <<
+
+function output {
+    # this function is used to output text in the terminal
+
+    # output text in green
+    echo -e "\e[1;32m$1\e[0m" >&2
+}
+
+function input {
+    # this function is used to input text in the terminal
+
+    # input text in green
+    echo -en "\e[1;32m$1\e[0m" >&2
+    read $2 in 
+    # if input is secret, it will not be shown and end with a new line
+    if [ "$2" == "-s" ]; then echo '' >&2; fi
+    echo $in
+}
+
+
+function my_rofi {
+    # this function is used to show a rofi window, with all specified options
+
+    # rofi helper function. All options are set by the arguments
+    local list="$1"
+    local info="$2"
+    local prompt="$3"
+    local options="$4"
+
+    local cmd=""
+
+    if [[ "$list" == "nolist" ]]; then
+        # if there is no list, it will only show the information and return.
+
+        rofi -e "$(echo -e "$info")"
+        return 0
+    else
+        # if there is a list, it will show the list and return the selected element.
+        #cmd="echo -e \"$list\" | rofi -dmenu "
+
+        if [[ "$prompt" != "-" ]]; then
+            # if there is a prompt, it will show the prompt
+            prompt="$prompt"
+        else
+            # if there is no prompt, it is set to empty, otherwise it shows e.g. dmenu
+            prompt=""
+        fi
+
+        if [[ "$info" != "-" ]]; then
+            # if there is information, it will show the information
+
+
+            # the information is shown in the rofi window and return the selected element. Escape returns an error;
+            mesg="-mesg " 
+            
+        else
+            # if there is no information, the field will not be shown. Escape returns an error;
+            mesg=""
+            info=""
+        fi
+        if [[ "$list" == "only-enter" ]]; then
+            # if there is only the option to enter something, it will only show the dmenu and return the entered element.
+            ret=$(rofi -dmenu -p "$prompt" $mesg "$(echo -e "$info")" $options)
+        else
+            # if there is a list, it will show the list and return the selected element.
+            ret=$(echo -e "$list" | rofi -dmenu -p "$prompt" $mesg "$(echo -e "$info")" $options)
+        fi
+        check_abort;
+        echo $ret
+    fi
+}
+
+
+
+
+# ---------------------------------------------
+# >> USEFULL FUNCTIONS <<
+
+
+
+function get_path_identifies_by_window_pid {
+    # this function is used to get term/identifies/title of the given window pid
+
+    # get the founded titles of the active window
+    local pid="$1"
+
+    # get the title pid of the active window
+    local title_pid=$(get_window_information $pid title-class)
+    # replace illegal characters
+    local title_pid=$(replace_illegal_filename_chars "$title_pid")
+    # get the founded titles of the active window
+    local foundedTitles=$(find "$PATH_TO_PASS" -name "$title_pid*.gpg")
+
+    # if nothing is found, try without the class
+    if [[ "$foundedTitles" == "" ]]; then
+        # get the title without class of the active window
+        local title=$(get_window_information $pid title)
+        # replace illegal characters
+        local title=$(replace_illegal_filename_chars "$title")
+        # get the founded titles of the active window
+        local foundedTitles=$(find "$PATH_TO_PASS" -name "$title*.gpg")
+    fi
+
+    if [[ "$foundedTitles" == "" ]]; then
+        # if nothing is found, return none
+        echo "none"
+    else
+        # if something is found, cut on each line the $PATH_TO_PASS and the .gpg, so the termnames/identifies/notes are shown
+        echo "$(echo "$foundedTitles" | sed "s|$PATH_TO_PASS/||" | sed 's/.gpg//g')"
+    fi
+}
+
+function get_identify_by_pathpass_identifies {
+    # this function is used to get the founded identifies by the founded pathpass/identifies
+
+    # get the founded identifies
+    #TODO: check, if it is needed to check if there are more than one identifies?
+    local identifiesFN="$1"
+
+    if [[ "$identifiesFN" == "none" ]]; then
+        # if there is no identify return none
+        echo "none"
+    elif [[ $(echo "$identifiesFN" | wc -l) -eq 1 ]]; then
+        # if there is only one identify, it will be used
+        echo "${identifiesFN##*/}"
+    else
+        # if there are more than one identifies, take the first one
+        echo "$(echo "$identifiesFN" | head -n 1 | awk -F/ '{ print $3 }' )"
+    fi
+}
+
+
+function choose_auto_term_by_identifies {
+    # this function is used to choose a term by the founded identifies
+    # choose the term by the founded identifies
+
+    # get pass_identifies
+    local identifiesFN="$1"
+
+    local terms="$(echo "$identifiesFN" | awk -F/ '{ print $1 }' | sort | uniq)"
+
+    # if there are no identifies, choose a term by yourself, if there is only one term, choose this one, otherwise choose one of the founded terms
+    if [[ "$identifiesFN" == "none" ]]; then
+        # if there is no identifies, you have to choose one by yourself
+        ret="$(my_rofi "$(all_termnames)" "-" "Choose term: " "-i -no-custom")"; check_abort;
+    elif [[ $(echo "$terms" | wc -l) -eq 1 ]]; then
+        # if there is only one identifies, it will be used
+        echo "$terms"
+        return 0
+    else
+        # if there are more than one identifies, you have to choose one
+        ret="$(my_rofi "$terms\nChoose another Term to edit" "-" "Choose from founded terms: " "-i -no-custom")"; check_abort;
+    fi    
+    echo "$ret"
+}
+
+
+
+
+
+
+# ---------------------------------------------
+# >> INDEPENDENT FUNCTIONS <<
+
+
+function get_window_pid {
+    # this function is used to get the window pid of the chosen window
+
+    # get the window pid by the given finding
+    local finding=$1
+
+    if [[ $finding == "select-window" ]]; then
+        # select a window by clicking on it
+        echo $(xdotool selectwindow)
+    fi
+
+    if [[ $finding == "active-window" ]]; then
+        # get the active window
+        echo $(xdotool getactivewindow)
+    fi
+}
+
+
+
+
+
+function get_window_information {
+    # this function is used to get the information of the chosen window
+
+    # get the information of the window by the given pid
+    local pid="$1"
+    # get the information of the window by the given information
+    local theInformation="$2"
+
+
+    if [[ "$theInformation" == "class" ]]; then
+        # get only the class of the window
+
+        echo "$(xdotool getwindowclassname "$pid")"
+    fi
+
+    if [[ "$theInformation" == "title" ]]; then
+        # get only the title of the window
+
+        local title=$(xdotool getwindowname "$pid")
+        # remove the class from the title
+        title_withoutClass=$(echo "$title" | rev | cut -d'-' -f2- | rev)
+        # remove all blanks at the end
+        title_withoutClass=$(echo "$title_withoutClass" | sed 's/ *$//')
+        echo "$title_withoutClass"
+    fi
+
+    if [[ "$theInformation" == "title-class" ]]; then
+        # get the title and the class of the window
+
+        echo "$(xdotool getwindowname "$pid")"
+    fi
+}
+
+function check_counts {
+    # this function is used to check how many elements are founded
+
+    if [ $(echo "$1" | wc -l) -gt 1 ]; then
+        # if there are more than one element, it will return more
+        echo "more"
+    elif [ $(echo "$1" | wc -l) -eq 1 ]; then
+        # if there is only one element, it will return one
+        echo "one"
+    else
+        # if there is no element, it will return none
+        echo "none"
+    fi
+}
+
+
+
+
+
+# ---------------------------------------------
+# >> PATH STRUCTURE FUNCTIONS <<
+
+
+function all_termnames {
+    # this function is used to get all termnames in pass store
+
+    # get the count of the directories to passstore path 
+    local rootCount=$(echo "$PATH_TO_PASS" | awk -F/ '{ print NF }')
+
+    # return all termnames only
+    echo -e "$(find $PATH_TO_PASS -maxdepth 1 -not -name '.*' -type d | awk -F/ -v var="$((rootCount+1))" '{  print $var }' )"
+}
+
+
+function get_element {
+    # This function returns the element associated with the chosen term. It is for simplification purposes
+    
+    local term="$1"
+    local what="$2"
+
+    case $what in
+        name) echo "$( find "$PATH_TO_PASS/$term/name" -name '*.gpg' | awk -F/ '{ print $NF }' | sed 's/.gpg//g' )" ;;
+        pass) pass "$term"/pass ;;
+        urls) echo "$( find $PATH_TO_PASS/"$term"/urls -name '*.gpg' | awk -F/ '{ print $NF }' | sed 's/.gpg//g' )" ;;
+        title) echo "$( find $PATH_TO_PASS/"$term"/titles -name '*.gpg' | awk -F/ '{ print $NF }' | sed 's/.gpg//g' )" ;;
+        autofill) echo "$( find $PATH_TO_PASS/"$term"/autofill -name '*.gpg' | awk -F/ '{ print $NF }' | sed 's/.gpg//g' )" ;;
+        identifies) echo "$( find $PATH_TO_PASS/"$term"/identifies -name '*.gpg' | awk -F/ '{ print $NF }' | sed 's/.gpg//g' )" ;;
+        notes) echo "$( find $PATH_TO_PASS/"$term"/notes -name '*.gpg' | awk -F/ '{ print $NF }' | sed 's/.gpg//g' )" ;;
+    esac
+    
+}
+
+function paste_element_value {
+    local term="$1"
+    local what="$2"
+
+    local element=""
+    case $what in
+        name) pass -c "$term/name/$(get_element "$term" name)" ;;
+        pass) pass -c "$term/pass" ;;
+    esac
+    
+    # mark all text in field to overwrite
+    xdotool key ctrl+a
+
+    # it has to be copied to clipboard, because of the xdotool type for non english keyboard layouts
+    # paste element
+    xdotool key ctrl+shift+v # paste with shift, to paste also in terminal
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#structure for the terms
+#    local rootCount=$(echo "$PATH_TO_PASS" | awk -F/ '{ print NF }')
+#    # get the termnames of the founded titles
+#    echo "$(echo "$foundedTitles" | awk -F/ -v var="$(($rootCount+1))" '{ print $var }')"
+#}
+function replace_illegal_filename_chars {
+    local title="$1"
+    title=$(echo "$title" | sed 's/\//_=sl_/g')
+    title=$(echo "$title" | sed 's/\*/_=star_/g')
+    title=$(echo "$title" | sed 's/\?/_=quest_/g')
+    title=$(echo "$title" | sed 's/\"/_=quote_/g')
+    title=$(echo "$title" | sed 's/</_=lt_/g')
+    title=$(echo "$title" | sed 's/>/_=gt_/g')
+    title=$(echo "$title" | sed 's/|/_=pipe_/g')
+    title=$(echo "$title" | sed 's/:/_=colon_/g')
+    title=$(echo "$title" | sed 's/\\/_=bsl_/g')
+    title=$(echo "$title" | sed 's/\&/_=and_/g')
+    title=$(echo "$title" | sed 's/\;/_=sem_/g')
+    title=$(echo "$title" | sed 's/\$/_=dol_/g')
+    title=$(echo "$title" | sed 's/\^/_=car_/g')
+    title=$(echo "$title" | sed 's/\~/_=til_/g')
+    title=$(echo "$title" | sed 's/`/_=btick_/g')
+    echo "$title"
+}
+
+function replace_illegal_filename_chars_back {
+    local title="$1"
+    title=$(echo "$title" | sed 's/_=sl_/\//g')
+    title=$(echo "$title" | sed 's/_=star_/\*/g')
+    title=$(echo "$title" | sed 's/_=quest_/\?/g')
+    title=$(echo "$title" | sed 's/_=quote_/\"/g')
+    title=$(echo "$title" | sed 's/_=lt_/</g')
+    title=$(echo "$title" | sed 's/_=gt_/>/g')
+    title=$(echo "$title" | sed 's/_=pipe_/|/g')
+    title=$(echo "$title" | sed 's/_=colon_/:/g')
+    title=$(echo "$title" | sed 's/_=bsl_/\\/g')
+    title=$(echo "$title" | sed 's/_=and_/\&/g')
+    title=$(echo "$title" | sed 's/_=sem_/;/g')
+    title=$(echo "$title" | sed 's/_=dol_/\$/g')
+    title=$(echo "$title" | sed 's/_=car_/\^/g')
+    title=$(echo "$title" | sed 's/_=til_/\~/g')
+    title=$(echo "$title" | sed 's/_=btick_/`/g')
+    echo "$title"
+}
+
+
+
+function generate_password {
+    local password=$(pwgen -s $NUMBER_OF_CHARS_PER_WORD -N $NUMBER_OF_WORDS -c $NUMBER_OF_CAPITAL_LETTERS -y $SPECIAL_SIGNS -B $NUMBER_OF_SIGNS_BETWEEN_WORDS -E $NUMBER_OF_SIGNS_AT_THE_END -S $NUMBER_OF_SINGS_AT_THE_BEGINNING -n $NUMBERS_BETWEEN_WORDS -N $NUMBER_AT_THE_BEGINNING -N $NUMBER_AT_THE_END)
+    echo "$password"
+}
+
+
+function check_abort {
+    # this function is used to check if the rofi window is aborted. It is used to exit secondary functions without any output
+    if [ $? -eq 1 ]; then
+        exit 1
+    fi
+}
+
+function EXIT_IF_ABORT {
+    # this function is used to exit the program if the rofi window is aborted. It is used to exit primary functions with an abort message 
+    if [ $? -eq 1 ]; then
+        timeout 0.5s rofi -e "Aborted" -duration
+        exit 1
+    fi
+}
+
+case "$1" in
+    edit) edit ;;
+    new) new ;;
+    autofill) autofill ;;
+    get-info) get-info ;;
+esac
